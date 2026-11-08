@@ -5,22 +5,22 @@ import os
 from flask import Flask
 import threading
 
-# ================= 1. የመረጃ መቀበያ =================
+# ================= 1. የመረጃ መቀበያ (Configurations) =================
 BOT_TOKEN = "9296969504:AAGsg7ncwkfMV6Mn2eFs7JQLJXm3gJoMmJ4"
 SUPABASE_URL = "https://rlkpxelwewazvtghqhhd.supabase.co"
-
-# ማሳሰቢያ: እዚህ ጋር የራስዎን ረጅሙን 'eyJ...' ብሎ የሚጀምረውን ኮድ ያስገቡ
-SUPABASE_KEY = "eyJ....................(ረጅሙን ኮድ እዚህ ያስገቡ)...................."
+SUPABASE_KEY = "sb_publishable_aCQcrqUsaGytogTK0Kom5g_yhmSjXKP"
 
 FREE_GROUP_ID = -1002492184485
 STORAGE_GROUP_ID = -1004465909658
-VIP_GROUP_LINK = "https://t.me/addlist/YourVIPLink"
+VIP_GROUP_LINK = "https://t.me/addlist/YourVIPLink" # የ VIP ክላስዎን መጋበዣ ሊንክ እዚህ ያስገቡ
 
 ADMIN_IDS = [6183608197, 8937172663]
 
 bot = telebot.TeleBot(BOT_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 app = Flask(__name__)
+
+file_captions = {} # የፋይሉን ፅሁፍ (Caption) ለጊዜው ማቆያ
 
 # ================= 2. ዳታቤዝ =================
 def get_user(user_id):
@@ -32,28 +32,63 @@ def get_user(user_id):
         supabase.table("users").insert(new_user).execute()
         return new_user
 
-# ================= 3. አውቶማቲክ Button መላኪያ (ተስተካክሏል!) =================
-# ማከማቻው Group ቢሆንም Channel ቢሆንም ይሰራል
-@bot.channel_post_handler(content_types=['document', 'video', 'photo'], func=lambda message: message.chat.id == STORAGE_GROUP_ID)
-@bot.message_handler(content_types=['document', 'video', 'photo'], func=lambda message: message.chat.id == STORAGE_GROUP_ID)
-def auto_forward_to_free_group(message):
-    file_msg_id = message.message_id
-    
-    caption = message.caption if message.caption else "📚 አዲስ ማቴሪያል ተለቋል"
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton(text=f"📥 አውርድ: {caption[:20]}...", callback_data=f"get_{file_msg_id}"))
-    
+# ================= 3. ፋይል ማዘጋጃ (ለአድሚን ብቻ Inbox ላይ) =================
+@bot.message_handler(content_types=['document', 'video', 'photo', 'text'], func=lambda message: message.chat.type == 'private' and message.from_user.id in ADMIN_IDS)
+def prepare_file_for_group(message):
     try:
-        bot.send_message(
-            chat_id=FREE_GROUP_ID,
-            text=f"📌 አዲስ ትምህርት: **{caption}**\n\nለማውረድ ከታች ያለውን ይንኩ👇",
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
+        # 1. ፋይሉን ለደህንነት ወደ Storage Group መላክ
+        stored_msg = bot.copy_message(STORAGE_GROUP_ID, message.chat.id, message.message_id)
+        file_msg_id = stored_msg.message_id
+        
+        # 2. ፅሁፉን ማስታወስ
+        if message.caption:
+            caption = message.caption
+        elif message.text:
+            caption = message.text
+        else:
+            caption = "📚 አዲስ ማቴሪያል (Remedial Matrix)"
+            
+        file_captions[file_msg_id] = caption
+        
+        # 3. ለአድሚኑ መላኪያ ኮድ መስጠት
+        bot.reply_to(message, f"✅ **ፋይሉ ተዘጋጅቷል!**\n\nዋናው ግሩፕ ላይ በሚፈልጉት ቶፒክ (ለምሳሌ Biology) ውስጥ ገብተው ይህንን አጭር ኮድ ይላኩ፦\n\n`/send {file_msg_id}`", parse_mode="Markdown")
     except Exception as e:
-        print(f"Error sending message to Free Group: {e}")
+        bot.reply_to(message, f"⚠️ Error: {e}")
 
-# ================= 4. ፋይል መላክ እና ቆጠራ =================
+# ================= 4. ቶፒክ ላይ ፖስት ማድረጊያ (ለአድሚን ብቻ ግሩፕ ላይ) =================
+@bot.message_handler(commands=['send'], func=lambda message: message.chat.id == FREE_GROUP_ID and message.from_user.id in ADMIN_IDS)
+def post_prepared_file(message):
+    topic_id = message.message_thread_id
+    
+    # 1. አድሚኑ የፃፈውን አጭር ኮድ (/send 123) ማጥፋት
+    try:
+        bot.delete_message(message.chat.id, message.message_id)
+    except:
+        pass
+        
+    args = message.text.split()
+    if len(args) < 2:
+        return
+        
+    file_msg_id = int(args[1])
+    caption = file_captions.get(file_msg_id, "📚 አዲስ ማቴሪያል (Remedial Matrix)")
+    
+    # 2. Download እና View Buttons አዘጋጅቶ መልቀቅ
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("📥 Download", callback_data=f"get_{file_msg_id}"),
+        InlineKeyboardButton("👁 View", callback_data=f"get_{file_msg_id}")
+    )
+    
+    bot.send_message(
+        chat_id=FREE_GROUP_ID,
+        text=f"📌 **{caption}**\n\nለማውረድ ወይም ለማየት ከታች ያሉትን ቁልፎች ይጠቀሙ👇",
+        reply_markup=markup,
+        message_thread_id=topic_id,
+        parse_mode="Markdown"
+    )
+
+# ================= 5. ፋይል መላክ እና ቆጠራ (20 Limit) =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("get_"))
 def handle_file_request(call):
     user_id = call.from_user.id
@@ -83,7 +118,7 @@ def handle_file_request(call):
             send_paywall(user_id)
             bot.answer_callback_query(call.id, "⚠️ የነፃ ፋይል ገደብዎ አልቋል!", show_alert=True)
 
-# ================= 5. ክፍያ እና ግብዣ =================
+# ================= 6. ክፍያ እና ግብዣ (Paywall) =================
 def send_paywall(user_id):
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -116,8 +151,8 @@ def handle_paywall_options(call):
         bot.send_message(user_id, msg, parse_mode="Markdown")
         bot.answer_callback_query(call.id)
 
-# ================= 6. ደረሰኝ ማረጋገጫ =================
-@bot.message_handler(content_types=['photo'], func=lambda message: message.chat.type == 'private')
+# ================= 7. ደረሰኝ ማረጋገጫ (ተማሪዎች ሲልኩ ብቻ) =================
+@bot.message_handler(content_types=['photo'], func=lambda message: message.chat.type == 'private' and message.from_user.id not in ADMIN_IDS)
 def handle_receipts(message):
     user_id = message.from_user.id
     user_data = get_user(user_id)
@@ -162,7 +197,7 @@ def handle_admin_decision(call):
         bot.edit_message_caption("❌ **Rejected!**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         bot.send_message(student_id, "❌ የላኩት ደረሰኝ ትክክል ስላልሆነ ውድቅ ተደርጓል። እባክዎ ትክክለኛ ደረሰኝ ይላኩ።")
 
-# ================= 7. Referral እና Start Command =================
+# ================= 8. መግቢያ እና Web Server =================
 @bot.message_handler(commands=['start'])
 def start_bot(message):
     user_id = message.from_user.id
@@ -181,9 +216,8 @@ def start_bot(message):
                 supabase.table("users").update({"is_vip": True}).eq("user_id", inviter_id).execute()
                 bot.send_message(inviter_id, f"🏆 እንኳን ደስ አሎት! 40 ሰው ስለጋበዙ የ VIP አባል ሆነዋል። ሊንክ: {VIP_GROUP_LINK}")
 
-    bot.reply_to(message, "👋 ሰላም! ይህ የ Remedial ማቴሪያሎች ማውረጃ ቦት ነው። ትምህርቶችን ከ ዋናው ግሩፕ ላይ ማውረድ ይችላሉ።")
+    bot.reply_to(message, "👋 ሰላም! ይህ የ Remedial ማቴሪያሎች ማውረጃ ቦት ነው። ትምህርቶችን ከ ዋናው ግሩፕ ላይ ማውረድ ይችላሉ።\n\n⚠️ ማሳሰቢያ፡ ፋይሎችን ለማውረድ ቦቱ ላይ 'Start' ማለቶን እርግጠኛ ይሁኑ።")
 
-# ================= 8. Web Server =================
 @app.route('/')
 def home():
     return "Remedial Bot is running successfully!"
