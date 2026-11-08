@@ -60,7 +60,7 @@ def prepare_file_for_group(message):
 def post_prepared_file(message):
     topic_id = message.message_thread_id
     
-    # 1. አድሚኑ የፃፈውን አጭር ኮድ (/send 123) ማጥፋት
+    # 1. አድሚኑ የፃፈውን አጭር ኮድ ማጥፋት
     try:
         bot.delete_message(message.chat.id, message.message_id)
     except:
@@ -73,20 +73,26 @@ def post_prepared_file(message):
     file_msg_id = int(args[1])
     caption = file_captions.get(file_msg_id, "📚 አዲስ ማቴሪያል (Remedial Matrix)")
     
-    # 2. Download እና View Buttons አዘጋጅቶ መልቀቅ
+    # የቴሌግራምን ማርክዳውን ህግ እንዳይጥስ እና Error እንዳያመጣ በ HTML ተቀይሯል
+    safe_caption = str(caption).replace("<", "").replace(">", "").replace("&", "")
+    
     markup = InlineKeyboardMarkup()
     markup.add(
         InlineKeyboardButton("📥 Download", callback_data=f"get_{file_msg_id}"),
         InlineKeyboardButton("👁 View", callback_data=f"get_{file_msg_id}")
     )
     
-    bot.send_message(
-        chat_id=FREE_GROUP_ID,
-        text=f"📌 **{caption}**\n\nለማውረድ ወይም ለማየት ከታች ያሉትን ቁልፎች ይጠቀሙ👇",
-        reply_markup=markup,
-        message_thread_id=topic_id,
-        parse_mode="Markdown"
-    )
+    try:
+        bot.send_message(
+            chat_id=FREE_GROUP_ID,
+            text=f"📌 <b>{safe_caption}</b>\n\nለማውረድ ወይም ለማየት ከታች ያሉትን ቁልፎች ይጠቀሙ👇",
+            reply_markup=markup,
+            message_thread_id=topic_id,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        # Error ካለ ዝም ከሚል ግሩፑ ላይ ይነግረናል
+        bot.send_message(message.chat.id, f"⚠️ የቴክኒክ ችግር ተፈጥሯል: {e}", message_thread_id=topic_id)
 
 # ================= 5. ፋይል መላክ እና ቆጠራ (20 Limit) =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("get_"))
@@ -151,7 +157,7 @@ def handle_paywall_options(call):
         bot.send_message(user_id, msg, parse_mode="Markdown")
         bot.answer_callback_query(call.id)
 
-# ================= 7. ደረሰኝ ማረጋገጫ (ተማሪዎች ሲልኩ ብቻ) =================
+# ================= 7. ደረሰኝ ማረጋገጫ =================
 @bot.message_handler(content_types=['photo'], func=lambda message: message.chat.type == 'private' and message.from_user.id not in ADMIN_IDS)
 def handle_receipts(message):
     user_id = message.from_user.id
