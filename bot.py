@@ -5,14 +5,16 @@ import os
 from flask import Flask
 import threading
 
-# ================= 1. የመረጃ መቀበያ (Environment Variables) =================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "YOUR_SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "YOUR_SUPABASE_KEY")
+# ================= 1. የመረጃ መቀበያ (Configurations) =================
+# አሁን መረጃዎቹን ኮዱ ላይ በቀጥታ አስገብተናቸዋል (Render ላይ Error እንዳያመጣ)
 
-FREE_GROUP_ID = int(os.environ.get("FREE_GROUP_ID", "-1000000000000")) 
-STORAGE_GROUP_ID = int(os.environ.get("STORAGE_GROUP_ID", "-1000000000000")) 
-VIP_GROUP_LINK = os.environ.get("VIP_GROUP_LINK", "https://t.me/+YourPrivateLink")
+BOT_TOKEN = "9296969504:AAGsg7ncwkfMV6Mn2eFs7JQLJXm3gJoMmJ4"
+SUPABASE_URL = "https://rlkpxelwewazvtghqhhd.supabase.co"
+SUPABASE_KEY = "sb_publishable_aCQcrqUsaGytogTK0Kom5g_yhmSjXKP"
+
+FREE_GROUP_ID = -1002492184485
+STORAGE_GROUP_ID = -1004465909658
+VIP_GROUP_LINK = "https://t.me/addlist/YourVIPLink" # እዚህ ጋር የ 140 አባላት ያለበትን ግሩፕ Invite link ያስገቡ
 
 # የአድሚን አይዲዎች
 ADMIN_IDS = [6183608197, 8937172663]
@@ -191,6 +193,6 @@ def run_bot():
     bot.infinity_polling()
 
 if __name__ == "__main__":
-    threading.Thread(target=run_bot).start()
+    threading.Thread(target=run_bot, daemon=True).start()
     port = int(os.environ.get('PORT', 10000))
     app.run(host="0.0.0.0", port=port)
