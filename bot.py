@@ -6,15 +6,17 @@ from flask import Flask
 import threading
 
 # ================= 1. የመረጃ መቀበያ (Configurations) =================
-# አሁን መረጃዎቹን ኮዱ ላይ በቀጥታ አስገብተናቸዋል (Render ላይ Error እንዳያመጣ)
-
 BOT_TOKEN = "9296969504:AAGsg7ncwkfMV6Mn2eFs7JQLJXm3gJoMmJ4"
 SUPABASE_URL = "https://rlkpxelwewazvtghqhhd.supabase.co"
-SUPABASE_KEY = "sb_publishable_aCQcrqUsaGytogTK0Kom5g_yhmSjXKP"
+
+# ማሳሰቢያ: እዚህ ጋር የራስዎን ረጅሙን 'eyJ...' ብሎ የሚጀምረውን ኮድ ያስገቡ
+SUPABASE_KEY = "eyJ....................(ረጅሙን ኮድ እዚህ ያስገቡ)...................."
 
 FREE_GROUP_ID = -1002492184485
 STORAGE_GROUP_ID = -1004465909658
-VIP_GROUP_LINK = "https://t.me/addlist/YourVIPLink" # እዚህ ጋር የ 140 አባላት ያለበትን ግሩፕ Invite link ያስገቡ
+
+# ማሳሰቢያ: እዚህ ጋር የ Private ክላሱን መጋበዣ ሊንክ ያስገቡ
+VIP_GROUP_LINK = "https://t.me/addlist/YourVIPLink"
 
 # የአድሚን አይዲዎች
 ADMIN_IDS = [6183608197, 8937172663]
@@ -34,25 +36,24 @@ def get_user(user_id):
         return new_user
 
 # ================= 3. አውቶማቲክ Button መላኪያ =================
-@bot.message_handler(content_types=['document', 'video'], chat_id=STORAGE_GROUP_ID)
+@bot.message_handler(content_types=['document', 'video', 'photo'], chat_id=STORAGE_GROUP_ID)
 def auto_forward_to_free_group(message):
     file_msg_id = message.message_id
-    topic_id = message.message_thread_id 
     
     caption = message.caption if message.caption else "📚 አዲስ ማቴሪያል ተለቋል"
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton(text=f"📥 አውርድ: {caption[:20]}...", callback_data=f"get_{file_msg_id}"))
     
     try:
+        # message_thread_id የሚለውን አጥፍተነዋል፣ ስለዚህ ቀጥታ ክፍት ወደሆነው ቶፒክ (#General) ይልካል
         bot.send_message(
             chat_id=FREE_GROUP_ID,
             text=f"📌 አዲስ ትምህርት: **{caption}**\n\nለማውረድ ከታች ያለውን ይንኩ👇",
             reply_markup=markup,
-            message_thread_id=topic_id, 
             parse_mode="Markdown"
         )
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error sending message to Free Group: {e}")
 
 # ================= 4. ፋይል መላክ እና ቆጠራ (20 Limit) =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("get_"))
