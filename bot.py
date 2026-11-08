@@ -5,7 +5,7 @@ import os
 from flask import Flask
 import threading
 
-# ================= 1. የመረጃ መቀበያ (Configurations) =================
+# ================= 1. የመረጃ መቀበያ =================
 BOT_TOKEN = "9296969504:AAGsg7ncwkfMV6Mn2eFs7JQLJXm3gJoMmJ4"
 SUPABASE_URL = "https://rlkpxelwewazvtghqhhd.supabase.co"
 
@@ -14,18 +14,15 @@ SUPABASE_KEY = "eyJ....................(ረጅሙን ኮድ እዚህ ያስገ�
 
 FREE_GROUP_ID = -1002492184485
 STORAGE_GROUP_ID = -1004465909658
-
-# ማሳሰቢያ: እዚህ ጋር የ Private ክላሱን መጋበዣ ሊንክ ያስገቡ
 VIP_GROUP_LINK = "https://t.me/addlist/YourVIPLink"
 
-# የአድሚን አይዲዎች
 ADMIN_IDS = [6183608197, 8937172663]
 
 bot = telebot.TeleBot(BOT_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 app = Flask(__name__)
 
-# ================= 2. ዳታቤዝ (Supabase) =================
+# ================= 2. ዳታቤዝ =================
 def get_user(user_id):
     res = supabase.table("users").select("*").eq("user_id", user_id).execute()
     if len(res.data) > 0:
@@ -35,8 +32,10 @@ def get_user(user_id):
         supabase.table("users").insert(new_user).execute()
         return new_user
 
-# ================= 3. አውቶማቲክ Button መላኪያ =================
-@bot.message_handler(content_types=['document', 'video', 'photo'], chat_id=STORAGE_GROUP_ID)
+# ================= 3. አውቶማቲክ Button መላኪያ (ተስተካክሏል!) =================
+# ማከማቻው Group ቢሆንም Channel ቢሆንም ይሰራል
+@bot.channel_post_handler(content_types=['document', 'video', 'photo'], func=lambda message: message.chat.id == STORAGE_GROUP_ID)
+@bot.message_handler(content_types=['document', 'video', 'photo'], func=lambda message: message.chat.id == STORAGE_GROUP_ID)
 def auto_forward_to_free_group(message):
     file_msg_id = message.message_id
     
@@ -45,7 +44,6 @@ def auto_forward_to_free_group(message):
     markup.add(InlineKeyboardButton(text=f"📥 አውርድ: {caption[:20]}...", callback_data=f"get_{file_msg_id}"))
     
     try:
-        # message_thread_id የሚለውን አጥፍተነዋል፣ ስለዚህ ቀጥታ ክፍት ወደሆነው ቶፒክ (#General) ይልካል
         bot.send_message(
             chat_id=FREE_GROUP_ID,
             text=f"📌 አዲስ ትምህርት: **{caption}**\n\nለማውረድ ከታች ያለውን ይንኩ👇",
@@ -55,7 +53,7 @@ def auto_forward_to_free_group(message):
     except Exception as e:
         print(f"Error sending message to Free Group: {e}")
 
-# ================= 4. ፋይል መላክ እና ቆጠራ (20 Limit) =================
+# ================= 4. ፋይል መላክ እና ቆጠራ =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("get_"))
 def handle_file_request(call):
     user_id = call.from_user.id
@@ -85,7 +83,7 @@ def handle_file_request(call):
             send_paywall(user_id)
             bot.answer_callback_query(call.id, "⚠️ የነፃ ፋይል ገደብዎ አልቋል!", show_alert=True)
 
-# ================= 5. ክፍያ እና ግብዣ (Paywall) =================
+# ================= 5. ክፍያ እና ግብዣ =================
 def send_paywall(user_id):
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
@@ -118,7 +116,7 @@ def handle_paywall_options(call):
         bot.send_message(user_id, msg, parse_mode="Markdown")
         bot.answer_callback_query(call.id)
 
-# ================= 6. ደረሰኝ ማረጋገጫ (Admin Approval) =================
+# ================= 6. ደረሰኝ ማረጋገጫ =================
 @bot.message_handler(content_types=['photo'], func=lambda message: message.chat.type == 'private')
 def handle_receipts(message):
     user_id = message.from_user.id
@@ -185,7 +183,7 @@ def start_bot(message):
 
     bot.reply_to(message, "👋 ሰላም! ይህ የ Remedial ማቴሪያሎች ማውረጃ ቦት ነው። ትምህርቶችን ከ ዋናው ግሩፕ ላይ ማውረድ ይችላሉ።")
 
-# ================= 8. Web Server (ለ Render) =================
+# ================= 8. Web Server =================
 @app.route('/')
 def home():
     return "Remedial Bot is running successfully!"
