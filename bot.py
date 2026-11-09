@@ -4,15 +4,14 @@ from supabase import create_client, Client
 import os
 from flask import Flask
 import threading
+import time # ለ Typing አኒሜሽን እና መዘግየት የተጨመረ
 
-# ================= 1. የመረጃ መቀበያ (Configurations) =================
+# ================= 1. የመረጃ መቀበያ =================
 BOT_TOKEN = "9296969504:AAGsg7ncwkfMV6Mn2eFs7JQLJXm3gJoMmJ4"
 SUPABASE_URL = "https://rlkpxelwewazvtghqhhd.supabase.co"
 SUPABASE_KEY = "sb_publishable_aCQcrqUsaGytogTK0Kom5g_yhmSjXKP"
 
-FREE_GROUP_ID = -1002492184485
-STORAGE_GROUP_ID = -1004465909658
-VIP_GROUP_LINK = "https://t.me/addlist/YourVIPLink" # የ VIP ክላስዎን መጋበዣ ሊንክ እዚህ ያስገቡ
+VIP_GROUP_LINK = "https://t.me/+yQdJM7LxN8VmNWY0" 
 
 ADMIN_IDS = [6183608197, 8937172663]
 
@@ -20,150 +19,169 @@ bot = telebot.TeleBot(BOT_TOKEN)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 app = Flask(__name__)
 
-file_captions = {} # የፋይሉን ፅሁፍ (Caption) ለጊዜው ማቆያ
-
-# ================= 2. ዳታቤዝ =================
+# ================= 2. ዳታቤዝ (ተማሪዎችን መመዝገቢያ) =================
 def get_user(user_id):
     res = supabase.table("users").select("*").eq("user_id", user_id).execute()
     if len(res.data) > 0:
         return res.data[0]
     else:
         new_user = {"user_id": user_id, "download_count": 0, "is_vip": False, "referred_count": 0}
-        supabase.table("users").insert(new_user).execute()
+        try:
+            supabase.table("users").insert(new_user).execute()
+        except:
+            pass
         return new_user
 
-# ================= 3. ፋይል ማዘጋጃ (ለአድሚን ብቻ Inbox ላይ) =================
-@bot.message_handler(content_types=['document', 'video', 'photo', 'text'], func=lambda message: message.chat.type == 'private' and message.from_user.id in ADMIN_IDS)
-def prepare_file_for_group(message):
+# አድሚንን የማሳወቂያ መንገድ (Alert)
+def alert_admins(user_name, user_id, action):
+    for admin in ADMIN_IDS:
+        try:
+            safe_name = str(user_name).replace("[", "").replace("]", "")
+            bot.send_message(admin, f"🔔 **የምዝገባ እንቅስቃሴ!**\n\n👤 ተማሪ: [{safe_name}](tg://user?id={user_id})\n🎯 ምን እያደረገ ነው? : {action}", parse_mode="Markdown")
+        except:
+            pass
+
+# ================= 3. የአድሚን ሪፖርት ማያ (/stats) =================
+@bot.message_handler(commands=['stats'], func=lambda message: message.from_user.id in ADMIN_IDS)
+def show_stats(message):
     try:
-        # 1. ፋይሉን ለደህንነት ወደ Storage Group መላክ
-        stored_msg = bot.copy_message(STORAGE_GROUP_ID, message.chat.id, message.message_id)
-        file_msg_id = stored_msg.message_id
+        bot.send_chat_action(message.chat.id, 'typing')
+        time.sleep(1)
         
-        # 2. ፅሁፉን ማስታወስ
-        if message.caption:
-            caption = message.caption
-        elif message.text:
-            caption = message.text
-        else:
-            caption = "📚 አዲስ ማቴሪያል (Remedial Matrix)"
-            
-        file_captions[file_msg_id] = caption
+        res = supabase.table("users").select("*").execute()
+        all_users = res.data
+        total_users = len(all_users)
+        vip_users = sum(1 for u in all_users if u.get('is_vip'))
+        free_users = total_users - vip_users
         
-        # 3. ለአድሚኑ መላኪያ ኮድ መስጠት
-        bot.reply_to(message, f"✅ **ፋይሉ ተዘጋጅቷል!**\n\nዋናው ግሩፕ ላይ በሚፈልጉት ቶፒክ (ለምሳሌ Biology) ውስጥ ገብተው ይህንን አጭር ኮድ ይላኩ፦\n\n`/send {file_msg_id}`", parse_mode="Markdown")
+        msg = (f"📊 **የቦቱ አጠቃላይ መረጃ (Stats)**\n\n"
+               f"👥 **ጠቅላላ ቦቱን የጀመሩ ተማሪዎች:** {total_users}\n"
+               f"🌟 **ክፍያ ፈፅመው የገቡ (VIP):** {vip_users}\n"
+               f"⏳ **እያሰቡ ያሉ (Free):** {free_users}\n\n"
+               "ይህ መረጃ ተማሪዎች ቦቱን ሲጠቀሙ በየጊዜው ይዘመናል።")
+        bot.reply_to(message, msg, parse_mode="Markdown")
     except Exception as e:
-        bot.reply_to(message, f"⚠️ Error: {e}")
+        bot.reply_to(message, f"⚠️ ዳታቤዙን በማንበብ ላይ ስህተት ተፈጥሯል: {e}")
 
-# ================= 4. ቶፒክ ላይ ፖስት ማድረጊያ (ለአድሚን ብቻ ግሩፕ ላይ) =================
-@bot.message_handler(commands=['send'], func=lambda message: message.chat.id == FREE_GROUP_ID and message.from_user.id in ADMIN_IDS)
-def post_prepared_file(message):
-    topic_id = message.message_thread_id
-    
-    # 1. አድሚኑ የፃፈውን አጭር ኮድ ማጥፋት
-    try:
-        bot.delete_message(message.chat.id, message.message_id)
-    except:
-        pass
-        
-    args = message.text.split()
-    if len(args) < 2:
-        return
-        
-    file_msg_id = int(args[1])
-    caption = file_captions.get(file_msg_id, "📚 አዲስ ማቴሪያል (Remedial Matrix)")
-    
-    # የቴሌግራምን ማርክዳውን ህግ እንዳይጥስ እና Error እንዳያመጣ በ HTML ተቀይሯል
-    safe_caption = str(caption).replace("<", "").replace(">", "").replace("&", "")
-    
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton("📥 Download", callback_data=f"get_{file_msg_id}"),
-        InlineKeyboardButton("👁 View", callback_data=f"get_{file_msg_id}")
-    )
-    
-    try:
-        bot.send_message(
-            chat_id=FREE_GROUP_ID,
-            text=f"📌 <b>{safe_caption}</b>\n\nለማውረድ ወይም ለማየት ከታች ያሉትን ቁልፎች ይጠቀሙ👇",
-            reply_markup=markup,
-            message_thread_id=topic_id,
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        # Error ካለ ዝም ከሚል ግሩፑ ላይ ይነግረናል
-        bot.send_message(message.chat.id, f"⚠️ የቴክኒክ ችግር ተፈጥሯል: {e}", message_thread_id=topic_id)
-
-# ================= 5. ፋይል መላክ እና ቆጠራ (20 Limit) =================
-@bot.callback_query_handler(func=lambda call: call.data.startswith("get_"))
-def handle_file_request(call):
-    user_id = call.from_user.id
-    file_msg_id = int(call.data.split("_")[1])
-    
-    try:
-        bot.send_chat_action(user_id, 'typing')
-    except Exception:
-        bot.answer_callback_query(call.id, "⚠️ እባክዎ መጀመሪያ ወደ ቦቱ inbox ገብተው /start ይበሉ!", show_alert=True)
-        return
-
+# ================= 4. ደረጃ 1: ሰላምታ እና መተዋወቅ =================
+@bot.message_handler(commands=['start'], func=lambda message: message.chat.type == 'private')
+def start_funnel(message):
+    user_id = message.from_user.id
+    first_name = message.from_user.first_name
     user_data = get_user(user_id)
     
-    if user_data['is_vip']:
-        bot.copy_message(user_id, STORAGE_GROUP_ID, file_msg_id, protect_content=True)
-        bot.answer_callback_query(call.id, "✅ ፋይሉ በ Inbox ተልኳል!")
-    else:
-        count = user_data['download_count']
-        if count < 20:
-            new_count = count + 1
-            supabase.table("users").update({"download_count": new_count}).eq("user_id", user_id).execute()
-            bot.copy_message(user_id, STORAGE_GROUP_ID, file_msg_id, protect_content=True)
-            remains = 20 - new_count
-            bot.send_message(user_id, f"✅ ፋይሉ ተልኳል። (ነፃ ሙከራዎ {remains} ፋይሎች ቀርተውታል)")
-            bot.answer_callback_query(call.id, "✅ ፋይሉ በ Inbox ተልኳል!")
-        else:
-            send_paywall(user_id)
-            bot.answer_callback_query(call.id, "⚠️ የነፃ ፋይል ገደብዎ አልቋል!", show_alert=True)
+    if user_data.get('is_vip'):
+        bot.send_message(user_id, f"👋 ሰላም የ Remedial Matrix VIP ተማሪ! ወደ ክላሱ ለመግባት ይህንን ሊንክ ይጠቀሙ፦\n{VIP_GROUP_LINK}")
+        return
 
-# ================= 6. ክፍያ እና ግብዣ (Paywall) =================
-def send_paywall(user_id):
-    markup = InlineKeyboardMarkup(row_width=1)
+    # 1. አኒሜሽን (ዳርት/ቀስት)
+    try:
+        bot.send_dice(user_id, emoji='🎯')
+        bot.send_chat_action(user_id, 'typing') # Typing አኒሜሽን
+        time.sleep(2) # አኒሜሽኑ እስኪጫወት 2 ሰከንድ ይጠብቃል
+    except:
+        pass
+
+    bot.send_chat_action(user_id, 'typing')
+    time.sleep(1) # ለሰላምታው 1 ሰከንድ Typing ያሳያል
+
+    markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("💳 300 ብር ክፈል", callback_data="pay_money"),
-        InlineKeyboardButton("👥 40 ሰው ጋብዝ", callback_data="invite_friends")
+        InlineKeyboardButton("🧬 Natural Science", callback_data="stream_natural"),
+        InlineKeyboardButton("🌍 Social Science", callback_data="stream_social")
     )
-    bot.send_message(user_id, "⚠️ **የነፃ ሙከራዎ (20 ፋይሎች) አልቋል!**\n\nእባክዎ ትምህርቱን ለመቀጠል ከታች ያለውን አማራጭ ይጠቀሙ።", reply_markup=markup, parse_mode="Markdown")
+    
+    msg = (f"👋 ሰላም **{first_name}**! እንኳን ወደ **Remedial Matrix** በደህና መጣህ!\n\n"
+           "የ Remedial ትምህርት እና የፈተና ጊዜው አጭር በመሆኑ ብዙ ተማሪዎች ይጨነቃሉ። "
+           "ነገር ግን ትክክለኛውን የጥናት መንገድ ከተከተልክ በቀላሉ ማለፍ ትችላለህ! እኛም ከጎንህ ነን።\n\n"
+           "እስኪ መጀመሪያ ልወቀህ... የትኛውን Stream ነህ የምትማረው? 👇")
+           
+    bot.send_message(user_id, msg, reply_markup=markup, parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda call: call.data in ["pay_money", "invite_friends"])
-def handle_paywall_options(call):
+# ================= 5. ደረጃ 2: ችግርን መለየት እና ማጓጓት =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("stream_"))
+def handle_stream_choice(call):
     user_id = call.from_user.id
-    if call.data == "pay_money":
-        msg = ("💳 **የክፍያ አማራጮች:**\n\n"
-               "🔹 **Telebirr:** `0929698365`\n"
-               "🔹 **CBE (ንግድ ባንክ):** `1000667301673`\n"
-               "🔹 **Account name:** Mubarek Mustefa\n"
-               "🔹 **የሚያስተላልፉት:** 300 ብር\n\n"
-               "ከፍለው screenshot እዚህ 👇 ይላኩልን። ወዲያው አረጋግጠን ወደ ዋናው class (remedial special class) እናስገባዎታለን።")
-        bot.send_message(user_id, msg, parse_mode="Markdown")
-        bot.answer_callback_query(call.id)
-        
-    elif call.data == "invite_friends":
-        bot_info = bot.get_me()
-        invite_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-        user_data = get_user(user_id)
-        current_ref = user_data['referred_count']
-        msg = (f"👥 **የመጋበዣ ሊንክዎ:**\n\n{invite_link}\n\n"
-               f"ይህንን ሊንክ በመላክ 40 ተማሪዎችን ወደ ቦቱ ይጋብዙ።\n"
-               f"እስካሁን የጋበዙት: **{current_ref} / 40**")
-        bot.send_message(user_id, msg, parse_mode="Markdown")
-        bot.answer_callback_query(call.id)
+    stream = call.data.split("_")[1]
+    
+    alert_admins(call.from_user.first_name, user_id, f"Stream መርጧል ({stream}) 📚")
+    
+    # 2. Typing አኒሜሽን
+    bot.send_chat_action(user_id, 'typing')
+    time.sleep(1.5)
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🎁 VIP ፓኬጁን አሳየኝ", callback_data="show_package"))
+    
+    if stream == "natural":
+        msg = ("በጣም አሪፍ! 🧬 **Natural Science** ላይ በተለይ Physics እና Math ፈተናዎች ብዙ ተማሪዎችን ሲፈትኑ ይታያሉ።\n\n"
+               "ግን አትጨነቅ! እኛ ጋ የሁሉንም ትምህርቶች (Math, Physics, Chemistry, Biology, English) "
+               "ውስብስብ ጥያቄዎች እንዴት በቀላሉ መስራት እንደምትችል የምናሳይበት ልዩ ዘዴ አለን።\n\n"
+               "ወደ VIP ክላሳችን ምን ምን እንዳዘጋጀንልህ ማየት ትፈልጋለህ?")
+    else:
+        msg = ("በጣም አሪፍ! 🌍 **Social Science** ላይ ሰፊ ንባብ የሚፈልጉት History፣ Geography እና በተለይ Mathematics "
+               "ብዙ ተማሪዎችን ሲፈትኑ ይታያሉ።\n\n"
+               "ግን አትጨነቅ! እኛ ጋ የሁሉንም ትምህርቶች (History, Geography, Math, English) "
+               "ዋና ዋና ነጥቦች እና የፈተና አሰራር ስልቶችን የምናሳይበት ልዩ ዘዴ አለን።\n\n"
+               "ወደ VIP ክላሳችን ምን ምን እንዳዘጋጀንልህ ማየት ትፈልጋለህ?")
+               
+    bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, text=msg, reply_markup=markup, parse_mode="Markdown")
 
-# ================= 7. ደረሰኝ ማረጋገጫ =================
+# ================= 6. ደረጃ 3: መፍትሄ ማቅረብ (Value Building) =================
+@bot.callback_query_handler(func=lambda call: call.data == "show_package")
+def show_vip_package(call):
+    user_id = call.from_user.id
+    
+    alert_admins(call.from_user.first_name, user_id, "የ VIP ጥቅሞችን እያነበበ ነው... 🎁")
+    
+    # 3. Typing አኒሜሽን
+    bot.send_chat_action(user_id, 'typing')
+    time.sleep(2)
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("💳 አሁኑኑ ልመዝገብ (300 ብር)", callback_data="pay_now"))
+    
+    msg = ("🏆 **የ Remedial Matrix VIP ክላስ** 🏆\n\n"
+           "በክላሳችን ውስጥ ከተመዘገብክ እነዚህን ሁሉ ታገኛለህ፦\n\n"
+           "✅ **ከ2015 እስከ 2018 E.C** የነበሩ የ Remedial ሚኒስትሪ እና ሞዴል ፈተናዎች ከነ ሙሉ አሰራራቸው\n"
+           "✅ ግልፅ የሆኑ ቪዲዮ ቲቶሪያሎች እና አጫጭር ኖቶች (በአማርኛ ማብራሪያ)\n"
+           "✅ ራስህን የምትፈትሽባቸው Worksheets\n"
+           "✅ 24/7 የጥያቄ እና መልስ ድጋፍ ከአስተማሪዎች ጋር\n\n"
+           "⏱ **የፈተና ጊዜ በፍጥነት እየደረሰ ነው!** ቦታዎች ሳይሞሉ አሁኑኑ ተመዝግበህ ዝግጅትህን ጀምር!\n\n"
+           "💰 **የክፍያ መጠን:** 300 ብር ብቻ (ለሙሉ ኮርሱ)")
+           
+    bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, text=msg, reply_markup=markup, parse_mode="Markdown")
+
+# ================= 7. ደረጃ 4: ክፍያ እና ማሳመን (Closing) =================
+@bot.callback_query_handler(func=lambda call: call.data == "pay_now")
+def show_payment_methods(call):
+    user_id = call.from_user.id
+    
+    alert_admins(call.from_user.first_name, user_id, "የክፍያ አካውንቶችን እያየ ነው (ለመክፈል ተዘጋጅቷል)! 💳")
+    
+    # 4. Typing አኒሜሽን
+    bot.send_chat_action(user_id, 'typing')
+    time.sleep(1.5)
+    
+    msg = ("💳 **የክፍያ አማራጮች:**\n\n"
+           "🔹 **Telebirr:** `0929698365`\n"
+           "🔹 **CBE (ንግድ ባንክ):** `1000667301673`\n"
+           "🔹 **Account name:** Mubarek Mustefa\n"
+           "🔹 **የሚያስተላልፉት:** 300 ብር\n\n"
+           "⚠️ **ትኩረት:** ክፍያውን ከፈፀሙ በኋላ የከፈሉበትን **ደረሰኝ (Screenshot)** "
+           "ቀጥታ እዚሁ ቦት ላይ ይላኩልን (Upload ያድርጉ)።\n\n"
+           "ወዲያውኑ እንዳረጋገጥን የ VIP ክላሱን መግቢያ ሊንክ እንልክልዎታለን! ጀግና ነህ/ነሽ፣ እንጠብቅሃለን! 💪")
+           
+    bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, text=msg, parse_mode="Markdown")
+
+# ================= 8. ደረሰኝ ማረጋገጫ (Admin Workflow) =================
 @bot.message_handler(content_types=['photo'], func=lambda message: message.chat.type == 'private' and message.from_user.id not in ADMIN_IDS)
 def handle_receipts(message):
     user_id = message.from_user.id
     user_data = get_user(user_id)
     
-    if user_data['is_vip']:
+    if user_data.get('is_vip'):
+        bot.reply_to(message, "✅ እርስዎ አስቀድመው የ VIP አባል ነዎት!")
         return 
         
     markup = InlineKeyboardMarkup()
@@ -172,19 +190,21 @@ def handle_receipts(message):
         InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")
     )
     
+    alert_admins(message.from_user.first_name, user_id, "ደረሰኝ (Screenshot) ልኳል! 🧾")
+    
     for admin in ADMIN_IDS:
         try:
             bot.send_photo(
                 admin, 
                 message.photo[-1].file_id, 
-                caption=f"🧾 **አዲስ ክፍያ!**\n\nየተማሪው ID: `{user_id}`\nስም: {message.from_user.first_name}",
+                caption=f"🧾 **አዲስ ክፍያ መጥቷል!**\n\nየተማሪው ID: `{user_id}`\nስም: {message.from_user.first_name}",
                 reply_markup=markup,
                 parse_mode="Markdown"
             )
         except:
             pass
             
-    bot.reply_to(message, "✅ ደረሰኝዎ ደርሶናል! በአጭር ጊዜ ውስጥ አድሚን አይቶ Approval ሲሰጥዎ መልዕክት ይደርስዎታል።")
+    bot.reply_to(message, "✅ ደረሰኝዎ ደርሶናል! በአጭር ጊዜ ውስጥ አድሚን አይቶ ክፍያውን ሲያረጋግጥ የ VIP ሊንክ ይደርስዎታል። መልካም ቆይታ!")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("approve_") or call.data.startswith("reject_"))
 def handle_admin_decision(call):
@@ -196,37 +216,20 @@ def handle_admin_decision(call):
     student_id = int(student_id)
     
     if action == "approve":
-        supabase.table("users").update({"is_vip": True}).eq("user_id", student_id).execute()
-        bot.edit_message_caption("✅ **Approved!**", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        bot.send_message(student_id, f"🎉 እንኳን ደስ አሎት! ክፍያዎ ተረጋግጧል።\n\nወደ VIP ክላስ ለመቀላቀል ይህንን ይንኩ: {VIP_GROUP_LINK}")
+        try:
+            supabase.table("users").update({"is_vip": True}).eq("user_id", student_id).execute()
+        except:
+            pass
+        bot.edit_message_caption("✅ **Approved! (ተረጋግጧል)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+        bot.send_message(student_id, f"🎉 **እንኳን ደስ አሎት!** ክፍያዎ ተረጋግጧል።\n\nወደ VIP ክላስ ለመቀላቀል ይህንን ሊንክ ይጫኑ (ለማንም እንዳያጋሩ)፦\n{VIP_GROUP_LINK}")
     elif action == "reject":
-        bot.edit_message_caption("❌ **Rejected!**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+        bot.edit_message_caption("❌ **Rejected! (ውድቅ ተደርጓል)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         bot.send_message(student_id, "❌ የላኩት ደረሰኝ ትክክል ስላልሆነ ውድቅ ተደርጓል። እባክዎ ትክክለኛ ደረሰኝ ይላኩ።")
 
-# ================= 8. መግቢያ እና Web Server =================
-@bot.message_handler(commands=['start'])
-def start_bot(message):
-    user_id = message.from_user.id
-    args = message.text.split()
-    user_data = get_user(user_id)
-    
-    if len(args) > 1 and args[1].startswith("ref_"):
-        inviter_id = int(args[1].split("_")[1])
-        if inviter_id != user_id and user_data['download_count'] == 0:
-            inviter_data = get_user(inviter_id)
-            new_ref_count = inviter_data['referred_count'] + 1
-            supabase.table("users").update({"referred_count": new_ref_count}).eq("user_id", inviter_id).execute()
-            bot.send_message(inviter_id, f"🎉 አንድ ሰው በሊንክዎ ገብቷል! (ጠቅላላ የጋበዙት: {new_ref_count} / 40)")
-            
-            if new_ref_count >= 40:
-                supabase.table("users").update({"is_vip": True}).eq("user_id", inviter_id).execute()
-                bot.send_message(inviter_id, f"🏆 እንኳን ደስ አሎት! 40 ሰው ስለጋበዙ የ VIP አባል ሆነዋል። ሊንክ: {VIP_GROUP_LINK}")
-
-    bot.reply_to(message, "👋 ሰላም! ይህ የ Remedial ማቴሪያሎች ማውረጃ ቦት ነው። ትምህርቶችን ከ ዋናው ግሩፕ ላይ ማውረድ ይችላሉ።\n\n⚠️ ማሳሰቢያ፡ ፋይሎችን ለማውረድ ቦቱ ላይ 'Start' ማለቶን እርግጠኛ ይሁኑ።")
-
+# ================= 9. Web Server (ለ Render) =================
 @app.route('/')
 def home():
-    return "Remedial Bot is running successfully!"
+    return "Remedial Sales Bot is running perfectly!"
 
 def run_bot():
     bot.infinity_polling()
