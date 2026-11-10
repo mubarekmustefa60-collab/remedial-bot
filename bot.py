@@ -12,7 +12,7 @@ SUPABASE_URL = "https://rlkpxelwewazvtghqhhd.supabase.co"
 SUPABASE_KEY = "sb_publishable_aCQcrqUsaGytogTK0Kom5g_yhmSjXKP"
 
 VIP_GROUP_LINK = "https://t.me/+yQdJM7LxN8VmNWY0" 
-SAMPLE_GROUP_LINK = "https://t.me/+39Ut1OlTHvdjYmQ0" # የ Sample ግሩፕዎ
+SAMPLE_GROUP_LINK = "https://t.me/+39Ut1OlTHvdjYmQ0"
 
 FREE_GROUP_ID = -1002492184485
 STORAGE_GROUP_ID = -1004465909658
@@ -43,69 +43,137 @@ def alert_admins(user_name, user_id, action):
         except:
             pass
 
-# ================= 3. አዲሱ የ Quiz / Poll ሲስተም =================
-# አድሚኑ ማከማቻው ግሩፕ ላይ #quiz ብሎ ሲፅፍ ቦቱ ወደ ዋናው ግሩፕ በ Poll መልክ ይልከዋል
-@bot.message_handler(func=lambda message: message.chat.id == STORAGE_GROUP_ID and '#quiz' in (message.text or message.caption or "").lower())
-def handle_quiz_broadcast(message):
-    text = message.text if message.text else message.caption
-    lines = text.split('\n')
+# ================= 3. የአድሚን ፓኔል (Admin Dashboard) =================
+@bot.message_handler(commands=['admin', 'stats'], func=lambda message: message.from_user.id in ADMIN_IDS and message.chat.type == 'private')
+def admin_panel(message):
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("📊 ሪፖርት ማያ 📈", callback_data="admin_stats"),
+        InlineKeyboardButton("📝 ጥያቄ (Quiz) 🎯", callback_data="admin_quiz"),
+        InlineKeyboardButton("📢 ወደ ግሩፕ ላክ 📌", callback_data="admin_broadcast_group"),
+        InlineKeyboardButton("📩 ለተጠቃሚዎች ላክ 🚀", callback_data="admin_broadcast_users")
+    )
+    bot.send_message(message.chat.id, "👨‍💻 **የአድሚን መቆጣጠሪያ ፓኔል:**\n\nምን ማድረግ ይፈልጋሉ?", reply_markup=markup, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
+def handle_admin_actions(call):
+    if call.from_user.id not in ADMIN_IDS:
+        return
+        
+    if call.data == "admin_stats":
+        bot.send_chat_action(call.message.chat.id, 'typing')
+        try:
+            res = supabase.table("users").select("*").execute()
+            all_users = res.data
+            total_users = len(all_users)
+            vip_users = sum(1 for u in all_users if u.get('is_vip'))
+            free_users = total_users - vip_users
+            
+            msg = (f"📊 **የቦቱ አጠቃላይ መረጃ (Stats)** 📊\n\n"
+                   f"👥 **ጠቅላላ የጀመሩ ተማሪዎች (Total Users):** {total_users}\n"
+                   f"🌟 **ክፍያ ፈፅመው የገቡ (VIP):** {vip_users}\n"
+                   f"⏳ **እያሰቡ ያሉ (Free):** {free_users}")
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=msg, parse_mode="Markdown")
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"⚠️ Error: {e}", show_alert=True)
+            
+    elif call.data == "admin_quiz":
+        msg = bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
+                                    text="📝 **ጥያቄዎን ይፃፉ:**\n\nበመጀመሪያ ጥያቄውን፣ በመቀጠል ደግሞ ምርጫዎቹን ከፊት ለፊታቸው ሰረዝ (-) በማድረግ ይፃፉ።\n\n*ለምሳሌ:*\nየትኛው ትክክል ነው?\n- ምርጫ ሀ\n- ምርጫ ለ\n\n(ለማቋረጥ /cancel ይበሉ)", 
+                                    parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_quiz_broadcast)
+        
+    elif call.data == "admin_broadcast_group":
+        msg = bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
+                                    text="📢 **ወደ ግሩፕ ማስታወቂያ ይላኩ:**\n\nማንኛውንም ፅሁፍ፣ ፎቶ ወይም ቪዲዮ አሁን ቢልኩልኝ ቀጥታ ዋናው ግሩፕ ላይ ልኬ **Pin 📌** አደርገዋለሁ።\n\n(ለማቋረጥ /cancel ይበሉ)", 
+                                    parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_group_broadcast)
+
+    elif call.data == "admin_broadcast_users":
+        msg = bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
+                                    text="📩 **ወደ ተጠቃሚዎች Inbox ይላኩ:**\n\nማንኛውንም ፅሁፍ፣ ፎቶ ወይም ቪዲዮ አሁን ቢልኩልኝ ቦቱን ለጀመሩ **ለሁሉም ተማሪዎች** ቀጥታ በውስጥ መስመር እልካለሁ!\n\n(ለማቋረጥ /cancel ይበሉ)", 
+                                    parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_user_broadcast)
+
+# ወደ Inbox መላኪያ ኮድ
+def process_user_broadcast(message):
+    if message.text == '/cancel':
+        bot.send_message(message.chat.id, "❌ የ Inbox ስርጭት ተቋርጧል።")
+        return
+        
+    bot.send_message(message.chat.id, "⏳ መልዕክቱን ለሁሉም ተጠቃሚዎች በመላክ ላይ ነኝ... እባክዎ ይጠብቁ።")
     
+    try:
+        res = supabase.table("users").select("user_id").execute()
+        users = res.data
+        success = 0
+        failed = 0
+        
+        for u in users:
+            try:
+                bot.copy_message(u['user_id'], message.chat.id, message.message_id)
+                success += 1
+            except:
+                failed += 1
+                
+        bot.send_message(message.chat.id, f"✅ **ስርጭቱ ተጠናቋል!** 🚀\n\n🟢 በተሳካ ሁኔታ የደረሳቸው: {success}\n🔴 የከለከሉ (Block ያደረጉ): {failed}")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"⚠️ ዳታቤዙን በማንበብ ላይ ችግር ተፈጥሯል: {e}")
+
+# ወደ ግሩፕ መላኪያ (Pin ማድረጊያ)
+def process_group_broadcast(message):
+    if message.text == '/cancel':
+        bot.send_message(message.chat.id, "❌ የማስታወቂያ ስርጭት ተቋርጧል።")
+        return
+        
+    try:
+        sent_msg = bot.copy_message(FREE_GROUP_ID, message.chat.id, message.message_id)
+        bot.pin_chat_message(FREE_GROUP_ID, sent_msg.message_id)
+        bot.send_message(message.chat.id, "✅ **ማስታወቂያው በተሳካ ሁኔታ ወደ ዋናው ግሩፕ ተልኮ Pin 📌 ተደርጓል!**")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"⚠️ ማስታወቂያው ሲላክ ችግር ተፈጥሯል: {e}")
+
+# የ Quiz ስርጭት መላኪያ
+def process_quiz_broadcast(message):
+    if message.text == '/cancel':
+        bot.send_message(message.chat.id, "❌ የ Quiz ስርጭት ተቋርጧል።")
+        return
+        
+    lines = message.text.split('\n')
     question = ""
     options = []
     
     for line in lines:
-        if '#quiz' in line.lower():
-            continue
-        elif line.strip().startswith('-'):
+        if line.strip().startswith('-'):
             options.append(line.strip()[1:].strip())
         else:
             question += line + "\n"
             
     if not options:
-        bot.reply_to(message, "⚠️ ጥያቄውን አላወቅኩትም። ምርጫዎቹን ከፊት ለፊታቸው ሰረዝ (-) በማድረግ ይፃፉ።")
+        bot.send_message(message.chat.id, "⚠️ **ስህተት:** ምርጫዎቹን አላገኘሁም። እባክዎ ከፊት ለፊታቸው ሰረዝ (-) ያድርጉ።")
         return
         
     bot_info = bot.get_me()
     bot_link = f"https://t.me/{bot_info.username}?start=quiz"
-    
     markup = InlineKeyboardMarkup(row_width=1)
+    
     for opt in options:
-        # ምርጫዎቹን ሲነኩ ቀጥታ ወደ ቦቱ Inbox ይወስዳቸዋል
-        markup.add(InlineKeyboardButton(text=opt, url=bot_link))
+        # ያሸበረቀች Button ለምርጫዎቹ
+        markup.add(InlineKeyboardButton(text=f"🔘 {opt}", url=bot_link))
         
     try:
-        bot.send_message(
+        sent_msg = bot.send_message(
             chat_id=FREE_GROUP_ID,
             text=f"📝 **የዛሬ ጥያቄ (Quiz):**\n\n{question.strip()}\n\n👇 **መልሱን ለመመለስ ከታች ያሉትን ምርጫዎች ይንኩ!**",
             reply_markup=markup,
             parse_mode="Markdown"
         )
-        bot.reply_to(message, "✅ ጥያቄው በ Poll መልክ ወደ ዋናው ግሩፕ ተልኳል!")
+        bot.pin_chat_message(FREE_GROUP_ID, sent_msg.message_id)
+        bot.send_message(message.chat.id, "✅ **ጥያቄው በ Poll መልክ ተልኮ Pin 📌 ተደርጓል!**")
     except Exception as e:
-        bot.reply_to(message, f"⚠️ Error: {e}")
+        bot.send_message(message.chat.id, f"⚠️ Error: {e}")
 
-# ================= 4. የአድሚን ሪፖርት ማያ (/stats) =================
-@bot.message_handler(commands=['stats'], func=lambda message: message.from_user.id in ADMIN_IDS)
-def show_stats(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        time.sleep(1)
-        
-        res = supabase.table("users").select("*").execute()
-        all_users = res.data
-        total_users = len(all_users)
-        vip_users = sum(1 for u in all_users if u.get('is_vip'))
-        free_users = total_users - vip_users
-        
-        msg = (f"📊 **የቦቱ አጠቃላይ መረጃ (Stats)**\n\n"
-               f"👥 **ጠቅላላ ቦቱን የጀመሩ ተማሪዎች:** {total_users}\n"
-               f"🌟 **ክፍያ ፈፅመው የገቡ (VIP):** {vip_users}\n"
-               f"⏳ **እያሰቡ ያሉ (Free):** {free_users}")
-        bot.reply_to(message, msg, parse_mode="Markdown")
-    except Exception as e:
-        bot.reply_to(message, f"⚠️ Error: {e}")
-
-# ================= 5. ደረጃ 1: ሰላምታ እና መተዋወቅ =================
+# ================= 4. ደረጃ 1: ሰላምታ እና መተዋወቅ =================
 @bot.message_handler(commands=['start'], func=lambda message: message.chat.type == 'private')
 def start_funnel(message):
     user_id = message.from_user.id
@@ -117,14 +185,12 @@ def start_funnel(message):
         bot.send_message(user_id, f"👋 ሰላም የ Remedial Matrix VIP ተማሪ! ወደ ክላሱ ለመግባት ይህንን ሊንክ ይጠቀሙ፦\n{VIP_GROUP_LINK}")
         return
 
-    # ተማሪው ከመልስ (Quiz) የመጣ ከሆነ የሚላክ ማበረታቻ
     if len(args) > 1 and args[1] == 'quiz':
         try:
             bot.send_dice(user_id, emoji='🎯')
             bot.send_chat_action(user_id, 'typing')
-            time.sleep(2)
-        except:
-            pass
+            time.sleep(1.5)
+        except: pass
         intro_msg = (f"🎉 **በጣም ጎበዝ {first_name}! አሪፍ ሙከራ ነው!**\n\n"
                      "በትምህርትህ ላይ እንደዚህ አይነት ብዙ ጥያቄዎችን፣ የ Remedial Matrix ሞዴል ፈተናዎችን እና "
                      "አጫጭር ማብራሪያዎችን ማግኘት ትፈልጋለህ?\n\n")
@@ -132,9 +198,8 @@ def start_funnel(message):
         try:
             bot.send_dice(user_id, emoji='🎲')
             bot.send_chat_action(user_id, 'typing')
-            time.sleep(2)
-        except:
-            pass
+            time.sleep(1.5)
+        except: pass
         intro_msg = (f"👋 ሰላም **{first_name}**! እንኳን ወደ **Remedial Matrix** በደህና መጣህ!\n\n"
                      "የ Remedial ትምህርት እና የፈተና ጊዜው አጭር በመሆኑ ብዙ ተማሪዎች ይጨነቃሉ። "
                      "ነገር ግን ትክክለኛውን የጥናት መንገድ ከተከተልክ በቀላሉ ማለፍ ትችላለህ!\n\n")
@@ -144,14 +209,14 @@ def start_funnel(message):
 
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("🧬 Natural Science", callback_data="stream_natural"),
-        InlineKeyboardButton("🌍 Social Science", callback_data="stream_social")
+        InlineKeyboardButton("🧬 Natural Science 🟢", callback_data="stream_natural"),
+        InlineKeyboardButton("🌍 Social Science 🟡", callback_data="stream_social")
     )
     
     msg = intro_msg + "እስኪ መጀመሪያ ልወቀህ... የትኛውን Stream ነህ የምትማረው? 👇"
     bot.send_message(user_id, msg, reply_markup=markup, parse_mode="Markdown")
 
-# ================= 6. ደረጃ 2: ችግርን መለየት እና ማጓጓት =================
+# ================= 5. ደረጃ 2: ችግርን መለየት እና ማጓጓት =================
 @bot.callback_query_handler(func=lambda call: call.data.startswith("stream_"))
 def handle_stream_choice(call):
     user_id = call.from_user.id
@@ -163,7 +228,7 @@ def handle_stream_choice(call):
     time.sleep(1.5)
     
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("🎁 VIP ፓኬጁን አሳየኝ", callback_data="show_package"))
+    markup.add(InlineKeyboardButton("🎁 VIP ፓኬጁን አሳየኝ 🌟", callback_data="show_package"))
     
     if stream == "natural":
         msg = ("በጣም አሪፍ! 🧬 **Natural Science** ላይ በተለይ Physics እና Math ፈተናዎች ብዙ ተማሪዎችን ሲፈትኑ ይታያሉ።\n\n"
@@ -179,7 +244,7 @@ def handle_stream_choice(call):
                
     bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, text=msg, reply_markup=markup, parse_mode="Markdown")
 
-# ================= 7. ደረጃ 3: መፍትሄ ማቅረብ እና Sample (Value Building) =================
+# ================= 6. ደረጃ 3: መፍትሄ ማቅረብ እና Sample =================
 @bot.callback_query_handler(func=lambda call: call.data == "show_package")
 def show_vip_package(call):
     user_id = call.from_user.id
@@ -191,8 +256,8 @@ def show_vip_package(call):
     
     markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
-        InlineKeyboardButton("👀 ነፃ የ Sample ትምህርቶችን እይ", url=SAMPLE_GROUP_LINK),
-        InlineKeyboardButton("💳 አሁኑኑ ልመዝገብ (300 ብር)", callback_data="pay_now")
+        InlineKeyboardButton("👀 ነፃ የ Sample ትምህርቶችን እይ 💎", url=SAMPLE_GROUP_LINK),
+        InlineKeyboardButton("💳 አሁኑኑ ልመዝገብ (300 ብር) 🚀", callback_data="pay_now")
     )
     
     msg = ("🏆 **የ Remedial Matrix VIP ክላስ** 🏆\n\n"
@@ -206,7 +271,7 @@ def show_vip_package(call):
            
     bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, text=msg, reply_markup=markup, parse_mode="Markdown")
 
-# ================= 8. ደረጃ 4: ክፍያ እና ማሳመን =================
+# ================= 7. ደረጃ 4: ክፍያ እና ማሳመን =================
 @bot.callback_query_handler(func=lambda call: call.data == "pay_now")
 def show_payment_methods(call):
     user_id = call.from_user.id
@@ -227,7 +292,7 @@ def show_payment_methods(call):
            
     bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, text=msg, parse_mode="Markdown")
 
-# ================= 9. ደረሰኝ ማረጋገጫ =================
+# ================= 8. ደረሰኝ ማረጋገጫ =================
 @bot.message_handler(content_types=['photo'], func=lambda message: message.chat.type == 'private' and message.from_user.id not in ADMIN_IDS)
 def handle_receipts(message):
     user_id = message.from_user.id
@@ -239,8 +304,8 @@ def handle_receipts(message):
         
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}"),
-        InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")
+        InlineKeyboardButton("✅ Approve 🟢", callback_data=f"approve_{user_id}"),
+        InlineKeyboardButton("❌ Reject 🔴", callback_data=f"reject_{user_id}")
     )
     
     alert_admins(message.from_user.first_name, user_id, "ደረሰኝ (Screenshot) ልኳል! 🧾")
@@ -278,6 +343,23 @@ def handle_admin_decision(call):
     elif action == "reject":
         bot.edit_message_caption("❌ **Rejected! (ውድቅ ተደርጓል)**", chat_id=call.message.chat.id, message_id=call.message.message_id)
         bot.send_message(student_id, "❌ የላኩት ደረሰኝ ትክክል ስላልሆነ ውድቅ ተደርጓል። እባክዎ ትክክለኛ ደረሰኝ ይላኩ።")
+
+# ================= 9. ለአዲስ ተጠቃሚዎች መምሪያ =================
+@bot.message_handler(content_types=['text'], func=lambda message: message.chat.type == 'private' and message.from_user.id not in ADMIN_IDS and not message.text.startswith('/'))
+def guide_users(message):
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🔄 ወደ መጀመሪያ ተመለስ (Start)", callback_data="restart_flow"))
+    
+    msg = ("👋 ሰላም! ለቴሌግራም አዲስ ከሆኑ አያሳስብዎትም።\n\n"
+           "እባክዎ እዚህ ጋ ዝም ብለው ፅሁፍ ከመፃፍ ይልቅ፣ <b>በመልዕክቱ መጨረሻ ላይ የተላኩልዎትን ቁልፎች (Buttons)</b> ይጫኑ።\n\n"
+           "አሊያም ከታች ያለውን አዝራር ነክተው ከመጀመሪያ ይጀምሩ👇")
+           
+    bot.reply_to(message, msg, reply_markup=markup, parse_mode="HTML")
+
+@bot.callback_query_handler(func=lambda call: call.data == "restart_flow")
+def restart_flow(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    bot.send_message(call.from_user.id, "እባክዎ ይህንን ይጫኑ 👉 /start")
 
 # ================= 10. Web Server =================
 @app.route('/')
